@@ -86,6 +86,34 @@ function deleteFaultCodeRecord(fid){
   renderFaultCodes?.();
   if(document.getElementById("faultCodeProfile"))location.href="faultcodes.html";
 }
+function deleteAllFaultCodes(){
+  let a=arr(K.fc);
+  if(!a.length)return alert("لا توجد أكواد أعطال مسجّلة أصلًا.");
+  if(!confirm(`حذف جميع أكواد الأعطال (${a.length}) نهائيًا؟ (كل الأنواع والماركات)`))return;
+  if(!confirm("تأكيد نهائي: لا يمكن التراجع عن الحذف."))return;
+  put(K.fc,[]);
+  renderFaultCodes?.();
+  alert("تم حذف جميع أكواد الأعطال.");
+}
+/* حذف كل الأكواد المطابقة لفلتر النوع/الماركة الحالي فوق القائمة — مفيد
+   لو عايز تمسح دفعة معينة استوردتها (زي كل أكواد ماركة أو نوع بعينه) من
+   غير ما تلمس باقي الأكواد. لازم تختار نوع أو ماركة على الأقل (منعًا من
+   حذف الكل بالغلط من الزرار ده؛ لحذف الكل فعلًا فيه الزرار المخصص لده). */
+function deleteFilteredFaultCodes(){
+  let typeFilter=document.getElementById("fcFilterType")?.value||"";
+  let brandFilter=document.getElementById("fcFilterBrand")?.value||"";
+  if(!typeFilter&&!brandFilter)return alert("اختار نوع الجهاز أو الماركة فوق (فلتر القائمة) الأول، عشان تحدد الدفعة اللي عايز تمسحها. لحذف كل الأكواد من غير فلتر، استخدم زرار «حذف كل الأكواد».");
+  let a=arr(K.fc);
+  let matches=a.filter(f=>(!typeFilter||f.deviceType===typeFilter)&&(!brandFilter||f.brand===brandFilter));
+  if(!matches.length)return alert("لا توجد أكواد مطابقة لهذا الفلتر.");
+  let label=[typeFilter,brandFilter].filter(Boolean).join(" • ")||"الفلتر الحالي";
+  if(!confirm(`حذف ${matches.length} كود مطابق لـ (${label}) نهائيًا؟`))return;
+  if(!confirm("تأكيد نهائي: لا يمكن التراجع عن الحذف."))return;
+  let ids=new Set(matches.map(x=>x.id));
+  put(K.fc,a.filter(x=>!ids.has(x.id)));
+  renderFaultCodes?.();
+  alert(`تم حذف ${matches.length} كود.`);
+}
 
 /* ---------------------------------------------------------------------
    العرض: صفحة القائمة الرئيسية (فلاتر نوع/ماركة/بحث + فورم إضافة)
