@@ -79,6 +79,25 @@ function saveFaultCode(e,existing=null){
   if(!result.ok)return;
   location.href=`faultcode.html?id=${result.fault.id}`;
 }
+/* زي saveFaultCode بالظبط بس من غير الانتقال لصفحة الكود — بتسيب النوع
+   والماركة واسم الفني زي ما هم وتفضح بس حقول الكود/الوصف/السبب/الحل،
+   عشان تدخل دفعة أكواد لنفس الماركة ورا بعض بسرعة من غير ما ترجع تفتح
+   الفورم من الأول في كل مرة. متاحة بس وقت الإضافة الجديدة (مش أثناء تعديل
+   كود موجود بالفعل).*/
+function saveFaultCodeAndAddAnother(){
+  let formData=collectFaultFormData();
+  if(!formData.code)return alert("اكتب كود العطل.");
+  if(!formData.title)return alert("اكتب وصف قصير للعطل.");
+  let dup=findDuplicateFaultCode(formData.deviceType,formData.brand,formData.code,null);
+  if(dup)return alert(`⚠️ الكود «${dup.code}» مسجّل بالفعل لنفس النوع/الماركة (${dup.title||""}).\n\nعدّل الكود الموجود بدل ما تضيف نسخة تانية.`);
+  let result=persistFaultRecord(formData,null);
+  if(!result.ok)return;
+  fcCode.value="";fcTitle.value="";fcCause.value="";fcFix.value="";fcNote.value="";
+  let hint=document.getElementById("faultDuplicateHint");
+  if(hint){hint.textContent=`✅ اتحفظ الكود «${result.fault.code}» — اكتب اللي بعده.`;hint.className="hint success";}
+  fcCode.focus();
+  renderFaultCodes?.();
+}
 function deleteFaultCodeRecord(fid){
   let a=arr(K.fc),f=a.find(x=>x.id===fid);if(!f)return;
   if(!confirm(`حذف كود العطل «${f.code}» نهائيًا؟`))return;
@@ -116,6 +135,69 @@ function deleteFilteredFaultCodes(){
 }
 
 /* ---------------------------------------------------------------------
+   إضافة دفعة أكواد مرة واحدة (لصق نص): سطر لكل كود بالشكل
+   "الكود | وصف قصير | السبب | الحل | ملاحظة" لنفس النوع/الماركة
+   المختارين فوق. بيوري معاينة (وبيوضح أي سطر ناقص أو مكرر) قبل ما
+   يتحفظ أي حاجة فعليًا في localStorage — التأكيد خطوة منفصلة.
+--------------------------------------------------------------------- */
+function parseBulkFaultLines(text){
+  return String(text||"").split("\n").map(l=>l.trim()).filter(Boolean).map(line=>{
+    let parts=line.split("|").map(p=>p.trim());
+    return {code:parts[0]||"",title:parts[1]||"",cause:parts[2]||"",fix:parts[3]||"",note:parts[4]||""};
+  });
+}
+function previewBulkFaultCodes(){
+  let box=document.getElementById("bulkFaultPreview");if(!box)return;
+  let deviceType=document.getElementById("bfDeviceType")?.value||"";
+  let brand=document.getElementById("bfBrand")?.value||"";
+  let rows=parseBulkFaultLines(document.getElementById("bfLines")?.value);
+  if(!rows.length){box.innerHTML='<div class="item">اكتب سطر واحد على الأقل الأول.</div>';return}
+  let validCount=0;
+  let seenInBatch=new Set();
+  let rowsHtml=rows.map((r,i)=>{
+    if(!r.code||!r.title){
+      return `<div class="item"><span class="danger">سطر ${i+1} هيتجاهل (لازم كود ووصف قصير مفصولين بـ | على الأقل)</span> — الجزء اللي اتفهم: «${esc(r.code||r.title||"—")}»</div>`;
+    }
+    let nc=normalizeFaultText(r.code);
+    if(findDuplicateFaultCode(deviceType,brand,r.code,null)){
+      return `<div class="item"><b>${esc(r.code)}</b> — ${esc(r.title)} <span class="badge">⚠️ مكرر لنفس النوع/الماركة، هيتجاهل</span></div>`;
+    }
+    if(seenInBatch.has(nc)){
+      return `<div class="item"><b>${esc(r.code)}</b> — ${esc(r.title)} <span class="badge">⚠️ مكرر مع سطر فوق في نفس اللصقة، هيتجاهل</span></div>`;
+    }
+    seenInBatch.add(nc);
+    validCount++;
+    return `<div class="item"><b>${esc(r.code)}</b> — ${esc(r.title)}${r.cause?`<div>السبب: ${esc(r.cause)}</div>`:""}${r.fix?`<div>الحل: ${esc(r.fix)}</div>`:""}</div>`;
+  }).join("");
+  let summary=`<p class="hint">${validCount} كود هيتحفظ من ${rows.length} سطر، لـ <b>${esc(deviceType)||"كل الأنواع"}</b> • <b>${esc(brand)||"كل الماركات"}</b>. راجع القايمة تحت كويس قبل التأكيد.</p>`;
+  let confirmBtn=validCount?`<div class="actions"><button type="button" class="primary" onclick="confirmBulkFaultCodes()">✅ تأكيد حفظ ${validCount} كود</button></div>`:"";
+  box.innerHTML=summary+rowsHtml+confirmBtn;
+}
+function confirmBulkFaultCodes(){
+  let deviceType=document.getElementById("bfDeviceType")?.value||"";
+  let brand=document.getElementById("bfBrand")?.value||"";
+  let rows=parseBulkFaultLines(document.getElementById("bfLines")?.value).filter(r=>r.code&&r.title);
+  if(!rows.length)return alert("مفيش أكواد صالحة للحفظ.");
+  let existing=arr(K.fc),added=0,skipped=0;
+  let seenInBatch=new Set();
+  rows.forEach(r=>{
+    let nc=normalizeFaultText(r.code);
+    if(findDuplicateFaultCode(deviceType,brand,r.code,null)||seenInBatch.has(nc)){skipped++;return}
+    seenInBatch.add(nc);
+    existing.push({
+      id:id(),deviceType,brand,code:r.code,title:r.title,cause:r.cause,fix:r.fix,note:r.note,
+      addedBy:"",source:"bulk",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+    });
+    added++;
+  });
+  if(!saveJSONSafe(K.fc,existing))return;
+  alert(`تم حفظ ${added} كود جديد.${skipped?` (اتجاهل ${skipped} كود مكرر).`:""}`);
+  document.getElementById("bfLines").value="";
+  document.getElementById("bulkFaultPreview").innerHTML="";
+  renderFaultCodes?.();
+}
+
+/* ---------------------------------------------------------------------
    العرض: صفحة القائمة الرئيسية (فلاتر نوع/ماركة/بحث + فورم إضافة)
 --------------------------------------------------------------------- */
 function initFaultCodes(){
@@ -123,10 +205,13 @@ function initFaultCodes(){
   let q=new URLSearchParams(location.search),editId=q.get("edit"),existing=editId?arr(K.fc).find(x=>x.id===editId):null;
   fillFaultDeviceTypes(fcDeviceType,existing?.deviceType||"");
   fillFaultBrands(fcBrand,existing?.brand||"");
+  fillFaultDeviceTypes(document.getElementById("bfDeviceType"));
+  fillFaultBrands(document.getElementById("bfBrand"));
   if(existing){
     fcCode.value=existing.code||"";fcTitle.value=existing.title||"";fcCause.value=existing.cause||"";
     fcFix.value=existing.fix||"";fcNote.value=existing.note||"";fcAddedBy.value=existing.addedBy||"";
     f.classList.remove("hidden");f.querySelector(".primary").textContent="💾 حفظ التعديلات وفتح الكود";
+    document.getElementById("fcSaveAddAnotherBtn")?.classList.add("hidden");
   }
   f.onsubmit=e=>saveFaultCode(e,existing);
   let hint=document.getElementById("faultDuplicateHint");
